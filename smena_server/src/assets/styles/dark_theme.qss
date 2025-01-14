@@ -1,0 +1,221 @@
+/* ===================== ТЁМНАЯ ТЕМА ===================== */
+
+/* ------ Окно и базовые настройки ------ */
+QMainWindow {
+    /* Градиентный фон (три stop: с запятыми между ними) */
+    background: qlineargradient(
+        spread: pad,
+        x1: 0, y1: 0,
+        x2: 1, y2: 1,
+        stop: 0   #040d21,
+        stop: 0.5 #020d24,
+        stop: 1   #010f2e
+    );
+    color: #E0E0E0;
+    font-family: "Poppins", sans-serif;
+    font-size: 14px;
+    border: none;
+}
+
+/*
+   Все внутренние виджеты по умолчанию «прозрачные»,
+   чтобы не затирать указанный градиент QMainWindow.
+*/
+QWidget {
+    background-color: transparent;
+    color: #E0E0E0;
+    border: none;
+}
+
+/* ------ Заголовок приложения (app-title) ------ */
+QLabel#app-title {
+    font-size: 28px;
+    font-weight: bold;
+    color: qlineargradient(
+        spread: pad,
+        x1: 0, y1: 0,
+        x2: 1, y2: 1,
+        stop: 0   #59db0000,
+        stop: 0.5 #d7dd1515,
+        stop: 1   #9add276d
+    );
+}
+
+/* Общий стиль QLabel */
+QLabel {
+    color: #E0E0E0; 
+    font-size: 13px;
+    font-weight: bold;
+    padding: 4px 0;
+}
+
+/*
+   Для QLabel#status_label, если property("status") == "Подключено" или "Отключено"
+*/
+QLabel#status_label[status="Подключено"] {
+    color: #1dec24; /* Зелёный */
+}
+QLabel#status_label[status="Отключено"] {
+    color: #ff0000; /* Красный */
+}
+
+/* ------ Кнопки ------ */
+QPushButton {
+    background: #F2994A; /* Оранжевый */
+    color: #FFFFFF;
+    border: 1px solid #F2994A;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* Hover/pressed для кнопок */
+QPushButton:hover {
+    background: #EB5757; /* Красновато-оранжевый при наведении */
+}
+QPushButton:pressed {
+    background: #F2994A; /* Возврат к исходному цвету */
+}
+
+/* Кнопки бокового меню */
+QPushButton#menu-button {
+    background-color: transparent;
+    border: none;
+}
+QPushButton#menu-button-item {
+    text-align: left;
+    padding-left: 20px;
+    border: none;
+    font-size: 14px;
+    background-color: transparent;
+    color: #E0E0E0;
+}
+QPushButton#menu-button-item:hover {
+    background-color: #03132e; /* Едва темнее при наведении */
+}
+
+/* ------ Поля ввода: QLineEdit, QTextEdit, QComboBox ------ */
+QLineEdit,
+QTextEdit,
+QComboBox {
+    background-color: #454552;
+    color: #E0E0E0;
+    border: 1px solid #303446;
+    padding: 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: Consolas, monospace;
+}
+QLineEdit:hover,
+QTextEdit:hover,
+QComboBox:hover {
+    border: 1px solid #bbff00; /* Оранжевая рамка при наведении */
+}
+
+/* Раскрывающийся список QComboBox */
+QComboBox QAbstractItemView {
+    background-color: #2A2A3A;
+    color: #E0E0E0;
+    border: 1px solid #F2994A;
+    /* selection-background-color / selection-color
+       в QSS поддерживаются Qt, хотя IDE может ругаться */
+    selection-background-color: #F2994A;
+    selection-color: #FFFFFF;
+}
+
+/* ------ Скроллбары ------ */
+QScrollBar:vertical,
+QScrollBar:horizontal {
+    background-color: #2A2E3A;
+    width: 14px;
+    border-radius: 6px;
+}
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background-color: #F2994A;
+    min-height: 30px;
+    border-radius: 6px;
+}
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background-color: #EB5757;
+}
+QScrollBar::add-line,
+QScrollBar::sub-line {
+    background: none;
+    border: none;
+    width: 0;
+    height: 0;
+}
+
+/* ------ Карточки тревог ------ */
+QWidget#alarm-container {
+    background-color: transparent;
+    border: none;
+}
+
+QWidget#alarm-card {
+    background-color: #091224;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+}
+
+/* Заголовок внутри карточки */
+QLabel#alarm-panel-label {
+    font-size: 16px;
+    font-weight: bold;
+    color: #F2C94C; /* желтоватый */
+}
+QLabel#alarm-time-label {
+    font-size: 12px;
+    color: #E0E0E0;
+}
+
+/* Кнопка «Подробнее» внутри карточки */
+QPushButton#details-button {
+    background-color: #F2994A;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+QPushButton#details-button:hover {
+    background-color: #EB5757;
+}
+QPushButton#details-button:pressed {
+    background-color: #F2994A;
+}
+
+/* ------ QDialog ------ */
+QDialog#dialog {
+    /* Градиент внутри диалогов */
+    background: qlineargradient(
+        spread: pad,
+        x1: 0, y1: 0,
+        x2: 1, y2: 1,
+        stop: 0   #2F2F38,
+        stop: 0.3 #242530,
+        stop: 1   #1A1B25
+    );
+    border-radius: 10px;
+    padding: 15px;
+    color: #E0E0E0;
+}
+
+
+}
+
+/* Окраска текста заголовка в зависимости от stateEvent */
+QLabel#alarm-panel-label[stateEvent="0"] {
+    color: #efe91010;
+}
+QLabel#alarm-panel-label[stateEvent="1"] {
+    color: #e81aff1a;
+}
+QLabel#alarm-panel-label[stateEvent="4"] {
+    color: #e8ffffff;
+}
+}

@@ -1,0 +1,19 @@
+# Игнорируем виртуальное окружение
+.venv/
+__pycache__/
+*.pyc
+
+# Игнорируем config.ini
+smena_server/src/ui/config.ini
+smena_server/src/ui/audio_sms/audio/config.ini
+smena_server/src/config/config.ini
+
+# Игнорируем папки
+smena_server/src/dist/
+smena_server/src/build/
+client_smena/
+smena_server/src/ui/__pycache__/
+smena_server/src/__pycache__/
+
+# Игнорируем тестовый файл
+smena_server/src/ui/test.py
