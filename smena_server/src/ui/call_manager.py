@@ -1,171 +1,144 @@
-import logging
+# call_manager.py
 import os
+import logging
 import time
 import threading
 import requests
 from requests.auth import HTTPDigestAuth
 from asterisk.ami import AMIClient
+from datetime import datetime
 
-logging.basicConfig(level=logging.DEBUG)
+# Создадим логгер call_manager
 logger = logging.getLogger('call_manager')
 
-# Лог AMI-событий
+# Создадим отдельный логгер для сырых AMI-событий
 ami_logger = logging.getLogger('ami_events')
-ami_handler = logging.FileHandler('ami_log.log', mode='a', encoding='utf-8')
-ami_handler.setLevel(logging.INFO)
-ami_formatter = logging.Formatter('%(asctime)s - %(message)s')
-ami_logger.addHandler(ami_handler)
+
+# Определим путь к logs/ami_log.log
+script_dir = os.path.dirname(os.path.abspath(__file__))
+logs_dir = os.path.join(script_dir, 'logs')
+if not os.path.exists(logs_dir):
+    os.makedirs(logs_dir)
+ami_log_path = os.path.join(logs_dir, 'ami_log.log')
+
+# Настраиваем FileHandler для ami_logger
+ami_file_handler = logging.FileHandler(ami_log_path, mode='a', encoding='utf-8')
+ami_file_handler.setLevel(logging.INFO)
+ami_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+ami_logger.addHandler(ami_file_handler)
 ami_logger.propagate = False
 
 
-class CallTracker:
-    def __init__(self, callback):
-        self.calls = {}  # linkedid -> {'uniqueids': [...], 'info': {...}}
-        self.lock = threading.Lock()
-        self.callback = callback
-
-    def add_call(self, uniqueid, linkedid, panel_id, phone_number):
-        with self.lock:
-            if linkedid not in self.calls:
-                self.calls[linkedid] = {
-                    'uniqueids': [],
-                    'info': {
-                        'panel_id': panel_id,
-                        'phone_number': phone_number,
-                        'start_time': time.time(),
-                        'status': 'INIT'
-                    }
-                }
-            if uniqueid not in self.calls[linkedid]['uniqueids']:
-                self.calls[linkedid]['uniqueids'].append(uniqueid)
-            logger.info(f"CallTracker: add_call linkedid={linkedid}, uniqueid={uniqueid}")
-
-    def update_status(self, uniqueid, linkedid, status, extra_info=None):
-        with self.lock:
-            if linkedid not in self.calls:
-                logger.warning(f"CallTracker: неизвестный linkedid={linkedid}, status={status}")
-                return
-
-            if uniqueid not in self.calls[linkedid]['uniqueids']:
-                self.calls[linkedid]['uniqueids'].append(uniqueid)
-
-            self.calls[linkedid]['info']['status'] = status
-            if status in ['ANSWERED', 'NO ANSWER', 'BUSY', 'FAILED', 'CANCELED', 'HUNG_UP']:
-                self.calls[linkedid]['info']['end_time'] = time.time()
-
-            call_info = self.calls[linkedid]['info'].copy()
-
-        self.callback(linkedid, uniqueid, status, call_info, extra_info)
-
-    def remove_call(self, linkedid):
-        with self.lock:
-            if linkedid in self.calls:
-                del self.calls[linkedid]
-                logger.info(f"CallTracker: remove_call linkedid={linkedid}")
-            else:
-                logger.warning(f"CallTracker: remove_call нет в списке linkedid={linkedid}")
-
-
 class CallManager:
+    """
+    CallManager отвечает за:
+    1. Подключение к AMI (проверяет наличие связи).
+    2. Инициирует звонок (make_call) через HTTP (ARawman), возвращает ActionID.
+    3. Слушает события AMI (_on_ami_event) и сопоставляет их с ActionID.
+    4. При получении финального статуса звонка вызывает callback(action_id, status, call_info).
+    """
+
     def __init__(self, config, callback):
+        """
+        :param config: ConfigParser/словарь с настройками Asterisk и HTTP.
+        :param callback: функция-обработчик статусов звонков: callback(action_id, status, call_info).
+        """
         self.config = config
         self.callback = callback
 
-        self.ami_host = config['Asterisk'].get('host', '192.168.3.20')
-        self.ami_port = config['Asterisk'].getint('port', fallback=5038)
-        self.ami_user = config['Asterisk'].get('user')
-        self.ami_pass = config['Asterisk'].get('password')
+        # Настройки AMI
+        self.ami_host = config['Asterisk'].get('host', '127.0.0.1')
+        self.ami_port = config['Asterisk'].getint('port', 5038)
+        self.ami_username = config['Asterisk'].get('user', 'admin')
+        self.ami_password = config['Asterisk'].get('password', 'password')
 
-        self.http_host = config['AsteriskHTTP'].get('host', '192.168.3.20')
-        self.http_port = config['AsteriskHTTP'].getint('port', fallback=8088)
-        self.http_user = config['AsteriskHTTP'].get('user')
-        self.http_secret = config['AsteriskHTTP'].get('password')
+        # Настройки HTTP (ARawman)
+        self.http_host = config['AsteriskHTTP'].get('host', '127.0.0.1')
+        self.http_port = config['AsteriskHTTP'].getint('port', 8088)
+        self.http_username = config['AsteriskHTTP'].get('user', 'admin')
+        self.http_password = config['AsteriskHTTP'].get('password', 'password')
         self.base_url = f"http://{self.http_host}:{self.http_port}/asterisk/arawman"
 
-        # Подключаемся к AMI
+        # Активные звонки: action_id -> {'phone_number':..., 'panel_id':..., ...}
+        self.active_calls = {}
+
+        # Подключение к AMI
+        self._stop = threading.Event()
         self.client = AMIClient(address=self.ami_host, port=self.ami_port)
         try:
             self.client.connect()
-            self.client.login(username=self.ami_user, secret=self.ami_pass)
-            logger.info("Подключение к AMI успешно")
+            self.client.login(username=self.ami_username, secret=self.ami_password)
+            logger.info("CallManager: Подключение к AMI выполнено")
         except Exception as e:
-            logger.error(f"Ошибка подключения к AMI: {e}")
-            raise
-
-        self.call_tracker = CallTracker(self.on_tracker_event)
+            logger.error(f"CallManager: Не удалось подключиться к AMI: {e}")
 
         # Слушаем все события
-        self.client.add_event_listener(self.on_ami_event)
+        self.client.add_event_listener(self._on_ami_event)
 
-        # Фоновый парсер лога
-        self.stop_flag = threading.Event()
-        self.parser_thread = threading.Thread(target=self.parse_ami_log, daemon=True)
-        self.parser_thread.start()
+    def _on_ami_event(self, event, **kwargs):
+        """
+        Сюда приходят все события AMI.
+        Логируем их в ami_log.log (через ami_logger).
+        Пытаемся извлечь финальный статус для известных нам ActionID.
+        """
+        ami_logger.info("Событие: %s, данные: %s", event.name, event)
 
-    def on_ami_event(self, event, **kwargs):
-        ami_logger.info(f"Event: {event.name}, data: {dict(event)}")
-        e_name = event.name
-        uniqueid = event.get('Uniqueid')
-        linkedid = event.get('Linkedid')
-        if not uniqueid and not linkedid:
-            return
+        name = event.name
+        data = event.keys
 
-        if e_name in ['Newstate']:
-            st = event.get('ChannelStateDesc', '').lower()
-            if st == 'ring':
-                self.call_tracker.update_status(uniqueid, linkedid, 'RINGING')
-            elif st == 'up':
-                self.call_tracker.update_status(uniqueid, linkedid, 'ANSWERED')
-            elif st == 'down':
-                self.call_tracker.update_status(uniqueid, linkedid, 'HUNG_UP')
+        if name == 'OriginateResponse' and 'ActionID' in data:
+            action_id = data.get('ActionID')
+            if action_id in self.active_calls:
+                response = data.get('Response', '')
+                reason = data.get('Reason', '')
+                final_status = self.map_originate_response(response, reason)
+                self.fire_callback_if_final(action_id, final_status)
 
-        elif e_name in ['Dial', 'DialBegin']:
-            dial_status = event.get('DialStatus', 'UNKNOWN').upper()
-            self.call_tracker.update_status(uniqueid, linkedid, dial_status)
+        elif name == 'DialEnd' and 'DialStatus' in data:
+            # Можем дополнительно обрабатывать, если нужно
+            pass
+        elif name == 'Hangup' and 'Cause' in data:
+            # Аналогично, если нужно
+            pass
 
-        elif e_name in ['DialEnd']:
-            dial_status = event.get('DialStatus', 'UNKNOWN').upper()
-            self.call_tracker.update_status(uniqueid, linkedid, dial_status)
+    def map_originate_response(self, response, reason):
+        """
+        Преобразует (Response, Reason) в финальный статус.
+        Пример:
+          - response='Success' + reason=4 => ANSWERED
+          - response='Failure' => FAILED
+          - reason=5 => BUSY
+          ...
+        """
+        if response.lower() == 'failure':
+            return 'FAILED'
+        if response.lower() == 'success':
+            if reason == '4':
+                return 'ANSWERED'
+            elif reason == '5':
+                return 'BUSY'
+            else:
+                return 'NO ANSWER'
+        return None
 
-        elif e_name == 'Hangup':
-            cause = event.get('Cause-txt', '')
-            self.call_tracker.update_status(uniqueid, linkedid, 'HUNG_UP', {'cause': cause})
-
-        elif e_name == 'OriginateResponse':
-            resp = event.get('Response', '')
-            if resp.lower() != 'success':
-                self.call_tracker.update_status(uniqueid, linkedid, 'FAILED', {'response': resp})
-
-    def on_tracker_event(self, linkedid, uniqueid, status, call_info, extra_info):
-        panel_id = call_info.get('panel_id')
-        phone_number = call_info.get('phone_number')
-
-        # Формируем report_data
-        report_data = {
-            'ID объекта': panel_id,
-            'ID события': uniqueid,
-            'Номер телефона': phone_number,
-            'Статус': f"Звонок завершен: {status}",
-            'Дата и время обработки': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'Время события': time.strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-        if status in ['ANSWERED', 'BRIDGED']:
-            report_data['Статус'] = 'Звонок принят'
-            self.callback(linkedid, 'CALL_COMPLETED', report_data, extra_info)
-            self.call_tracker.remove_call(linkedid)
-        elif status in ['NO ANSWER', 'BUSY', 'FAILED', 'CANCELED', 'HUNG_UP']:
-            self.callback(linkedid, 'CALL_HANGUP', report_data, extra_info)
-            self.call_tracker.remove_call(linkedid)
+    def fire_callback_if_final(self, action_id, final_status):
+        """
+        Если final_status не None, вызываем self.callback(action_id, final_status, call_info)
+        и удаляем звонок из self.active_calls.
+        """
+        if final_status is not None:
+            call_info = self.active_calls.get(action_id, {})
+            self.callback(action_id, final_status, call_info)
+            self.active_calls.pop(action_id, None)
 
     def make_call(self, phone_number, file_name, panel_id=None):
-        action_id = f"orig-{int(time.time()*1000)}"
-        variables = {
-            'vfile': file_name,
-            'phone_number': phone_number
-        }
+        """
+        Инициирует звонок через HTTP-запрос. Возвращает action_id.
+        """
+        action_id = f"originate-{int(time.time() * 1000)}"
+        variables = {"phone_number": phone_number, "vfile": file_name}
         if panel_id:
-            variables['panel_id'] = panel_id
+            variables["panel_id"] = panel_id
 
         params = {
             'action': 'Originate',
@@ -176,44 +149,37 @@ class CallManager:
             'Account': 'VOICEBOT',
             'Async': 'true',
             'ActionID': action_id,
-            'Variable': ','.join(f"{k}={v}" for k,v in variables.items())
+            'Variable': ','.join(f"{k}={v}" for k, v in variables.items()),
         }
 
-        logger.info(f"[HTTP-Originate] -> {params}")
+        logger.info(f"[make_call] action_id={action_id}, параметры: {params}")
         try:
             r = requests.get(
                 self.base_url,
                 params=params,
-                auth=HTTPDigestAuth(self.http_user, self.http_secret),
-                timeout=10
+                auth=HTTPDigestAuth(self.http_username, self.http_password),
+                timeout=5
             )
-            if r.status_code == 200 and 'Success' in r.text:
-                logger.info(f"Успешная инициализация: {r.text.strip()}")
-                self.call_tracker.add_call(action_id, action_id, panel_id, phone_number)
-                return action_id
+            if r.status_code == 200:
+                logger.info(f"Originate => успешно: {r.text.strip()}")
             else:
-                logger.error(f"Ошибка HTTP Originate: {r.status_code}, {r.text}")
+                logger.error(f"Originate => ошибка {r.status_code}: {r.text}")
         except Exception as e:
-            logger.error(f"Исключение при HTTP Originate: {e}")
-        return None
+            logger.error(f"Исключение в make_call: {e}")
 
-    def parse_ami_log(self):
-        log_file = 'ami_log.log'
-        while not self.stop_flag.is_set():
-            try:
-                if os.path.exists(log_file):
-                    with open(log_file, 'r', encoding='utf-8') as f:
-                        _ = f.readlines()
-                time.sleep(5)
-            except:
-                time.sleep(5)
+        self.active_calls[action_id] = {
+            'phone_number': phone_number,
+            'panel_id': panel_id,
+            'file_name': file_name,
+            'start_time': datetime.now()
+        }
+        return action_id
 
     def stop(self):
-        logger.info("CallManager -> stop()")
-        self.stop_flag.set()
-        self.parser_thread.join()
+        self._stop.set()
         try:
             self.client.logoff()
-        except:
-            pass
+            logger.info("CallManager: Отсоединение от AMI выполнено")
+        except Exception as ex:
+            logger.error(f"Ошибка при отключении от AMI: {ex}")
         logger.info("CallManager остановлен.")

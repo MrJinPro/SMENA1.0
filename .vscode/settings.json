@@ -1,0 +1,7 @@
+{
+    "python.analysis.extraPaths": [
+        "./smena_server/src",
+        "./smena_server/src/ui"
+    ],
+    "git.ignoreLimitWarning": true
+}

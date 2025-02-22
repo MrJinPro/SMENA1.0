@@ -206,7 +206,7 @@ QDialog#dialog {
 }
 
 
-}
+
 
 /* Окраска текста заголовка в зависимости от stateEvent */
 QLabel#alarm-panel-label[stateEvent="0"] {
@@ -217,5 +217,4 @@ QLabel#alarm-panel-label[stateEvent="1"] {
 }
 QLabel#alarm-panel-label[stateEvent="4"] {
     color: #e8ffffff;
-}
 }

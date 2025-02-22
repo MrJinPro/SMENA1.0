@@ -64,5 +64,5 @@ pyinstaller --onefile smena.py
 
 
 ## Контакты
-Если у вас есть вопросы или предложения, пишите на  [smena@mrjin.com](mailto:smena@mrjin.com).
+Если у вас есть вопросы или предложения, пишите на  [smena@mrjin.pro](mailto:smena@mrjin.pro).
 
